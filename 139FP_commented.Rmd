@@ -1,0 +1,341 @@
+---
+title: "Appendix, Online Dating and Relationship Length: Stat139 Final Project"
+author: "Miro Furtado and Tejal Patwardhan"
+output: pdf_document
+---
+# APPENDIX
+
+Load Libraries
+```{r}
+library(ggplot2)
+library(GGally) #(borks in Domino)
+library(haven)
+library(grid)
+library(gridExtra)
+library(MASS)
+library(reshape2)
+#rm(list=ls())
+```
+
+Diagnostic Plot Function (credit to Kristen)
+```{r}
+diagnostic.plots = function(model)
+{
+resid = data.frame(resid = model$residuals)
+# calculate qq line
+y = quantile(resid$resid, c(0.25, 0.75)) # Find the 1st and 3rd quartiles
+x = qnorm( c(0.25, 0.75))
+# Find the matching normal values on the x-axis
+slope = diff(y) / diff(x)
+# Compute the line slope
+int = y[1] - slope * x[1]
+# Compute the line intercept
+# qq plot
+qq.plot = ggplot(resid, aes(sample = resid)) +
+stat_qq() +
+geom_abline(intercept = int, slope = slope) + ggtitle("Normal Q-Q Plot") + theme(plot.title = element_text(hjust = 0.5))
+# Fitted values vs residuals to check equal variance
+var.plot = ggplot(model, aes(.fitted, sqrt(abs(.stdresid)))) +
+geom_point(na.rm = TRUE) +
+stat_smooth(method = "loess", na.rm = TRUE) +
+xlab("Fitted Value") +
+ylab(expression(sqrt("|Standardized residuals|"))) +
+ggtitle("Scale-Location") +
+theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+grid.arrange(qq.plot, var.plot)
+}
+```
+
+
+Data
+```{r}
+data <- read_dta("HCMST_ver_3.04.dta") # load data
+limit <- 2*nrow(data)/3 # set threshold for unanswered questions
+data <- data[,which(as.numeric(colSums(!is.na(data))) > limit)] # remove empty-ish variables
+data <- na.omit(data) # remove empty people
+
+data$rlength <- data$how_long_relationship
+data$how_long_relationship <- NULL
+
+# plot response variable
+hist(data$rlength, main="Histogram of Raw Relationship Length Values")
+ggplot(aes(x=rlength), data=data) + geom_histogram(bins=25) + labs(title="Histogram of Raw Relationship Length Values") + xlab("Raw Relationship Length") + ylab("Count")
+qqnorm(data$rlength, main="Q-Q Plot of Raw Relationship Length")
+qqline(data$rlength)
+head(data)
+```
+
+Transform the Response
+```{r}
+qqnorm((data$rlength)^.5)
+qqline((data$rlength)^.5)
+
+qqnorm((data$rlength)^.25)
+qqline((data$rlength)^.25)
+
+qqnorm(log(data$rlength))
+qqline(log(data$rlength))
+
+hist(data$rlength^.5)
+hist(data$rlength^.25)
+hist(log(data$rlength))
+
+# the sqrt transform worked best, so sqrt it
+data$rlength <- data$rlength^.5
+```
+
+
+Look at Variables of Interest (this includes an explanation of what the variables stand for)
+```{r}
+keeps <- c("ppage","duration", "hhinc", "ppeduc", "ppethm", "ppgender", "pppartyid3", "papglb_status", "pp2_pphhhead","ppreg4","ppnet","papglb_friend","q32","rlength")
+# we've already cleaned up our data, but this adjusts for multiple questions that measure the same thing. for example ppethm has 1 column with a categorical variable for ethnicity, and then there were 10+ specific columns that were just binary interpretations of the variable for each ethnicity  (Ex: vietnamese? japanese? korean?). the extra columns don't tell us new predictors, so we just kept one of each of the replicates.
+data <- data[ , (names(data) %in% keeps)]
+
+# ensure correct variable structure
+data$duration <- as.numeric(data$duration) #interview duration in minutes, rounded down
+data$hhinc <- as.numeric(data$hhinc) #household income, in $
+data$ppage <- as.numeric(data$ppage) #age
+data$ppeduc <- as.numeric(data$ppeduc) #educ (scale, 1 is least)
+data$ppethm <- as.factor(data$ppethm) #race
+data$ppgender <- as.factor(data$ppgender) #gender
+data$pppartyid3 <- as.factor(data$pppartyid3) #political party: 1 is repub, 2 is other, 3 is democrat
+data$papglb_status <- as.factor(data$papglb_status) #1 is yes, 2 is no, 3 prefers not to answer
+data$pp2_pphhhead <- as.factor(data$pp2_pphhhead) #household head?, 0 is no, 1 is yes
+data$ppreg4 <- as.factor(data$ppreg4) # region of residence, (1) northeast, midwest, south, (4) west
+data$ppnet <- as.factor(data$ppnet) # internet access at home
+data$papglb_friend <- as.factor(data$papglb_friend) #friends/relatives who are lgbtq? 1 friends 2 relatives 3 both 4 no 5 no response
+data$q32 <- as.numeric(data$q32) # how you met, 1 social networking, 2 no, 3 internet dating like eharmony, 4 internet classified site like craigslist, 5 internet chat room, 6 other internet
+data$online <- ifelse(data$q32==2,0,1)
+data$online <- as.factor(data$online)
+data$q32 <- NULL
+```
+
+Predictor Histograms
+```{r}
+data <- as.data.frame(data)
+data.melt = melt(data[,c("duration", "hhinc", "ppeduc","ppage")])
+ggplot(data.melt, aes(fill = factor(variable), value)) +
+geom_histogram(bins=25) +
+facet_wrap(~factor(variable), scales = 'free') + ylab("Count") + xlab("Predictor Value")
+```
+
+Transformed Histograms
+```{r}
+data$duration <- log(data$duration)
+data.melt = melt(data[,c("duration", "hhinc", "ppeduc","ppage")])
+ggplot(data.melt, aes(fill = factor(variable), value)) +
+geom_histogram(bins=25) +
+facet_wrap(~factor(variable), scales = 'free') + ylab("Count") + xlab("Predictor Value")
+```
+
+Relationship to Response
+```{r}
+data.melt.rlength =melt(data[,c("rlength","duration", "hhinc", "ppeduc","ppage")], id.vars =c('rlength'))
+ggplot(data.melt.rlength,aes(color=factor(variable), x = value, y = rlength))+geom_point(alpha=0.5,size=.3) +facet_wrap(~factor(variable), scales ='free') + ylab("Sqrt Relationship Length") + xlab("Predictor Value")
+
+data.melt.rlength =melt(data[,c("rlength","ppethm", "ppgender", "pppartyid3", "papglb_status", "pp2_pphhhead","ppreg4","ppnet","papglb_friend","online")], id.vars =c('rlength'))
+ggplot(data.melt.rlength,aes(color=factor(variable), x = value, y = rlength))+geom_boxplot()+facet_wrap(~factor(variable), scales ='free') + ylab("Sqrt Relationship Length") + xlab("Predictor Value")
+```
+
+Collinearity (for all variables)
+```{r}
+# measure linearity, collinearity, etc
+ggpairs(data[, c("rlength","ppage","duration", "hhinc", "ppeduc","ppethm", "ppgender", "pppartyid3", "papglb_status", "pp2_pphhhead","ppreg4","ppnet","papglb_friend","online")])
+```
+
+
+OLS Model 1
+```{r}
+# plot relationship between online and response
+summary(data$online)
+ggplot(aes(x=online,y=rlength),data=data) + geom_boxplot()
+
+# simple 1-predictor model
+model1 <- lm(rlength ~ online, data=data)
+summary(model1)
+
+# assumption-checking
+hist(resid(model1),col="grey",breaks=15)
+qqnorm(resid(model1))
+qqline(resid(model1))
+plot(resid(model1)~fitted(model1),cex=1.5,main="Model 1: Resids vs Fitted")
+abline(h=0,lwd=2)
+
+#summary(lm(rlength ~ online*ppage, data=data))
+
+```
+
+
+Calculating min vs max residuals
+```{r}
+df <- as.data.frame(resid(model1))
+df$fitted <- fitted(model1)
+names(df) <- c("resids","fitteds")
+mini <- df[ which(df$fitted < 3),]$resids
+var(mini)
+mini2 <- df[ which(df$fitted > 3),]$resids
+var(mini2)
+```
+
+Additionally, let's make a model specifically controlling for age, and call it model 1b. 
+```{r}
+# include age
+model1b <- lm(rlength ~ online*ppage, data=data)
+summary(model1b)
+
+# check assumptions
+hist(resid(model1b),col="grey",breaks=15)
+qqnorm(resid(model1b))
+qqline(resid(model1b))
+plot(resid(model1b)~fitted(model1b),cex=1.5)
+abline(h=0,lwd=2)
+
+diagnostic.plots(model1b)
+
+ggplot(aes(x=online,y=ppage),data=data) + geom_boxplot() + xlab("age") + ylab("Met Online?") + ggtitle("Meeting Online vs Age") # people who meet online tend to be younger
+
+```
+This shows that online dating is significant even after controlling for age.
+
+Now let's extend our model. First we will create a full model using all of our predictors (w/o interactions) and call it model 2.
+```{r}
+# full model
+model2 <- lm(rlength ~ ., data=data)
+summary(model2)
+
+# check assumptions
+hist(resid(model2),col="grey",breaks=15)
+qqnorm(resid(model2))
+qqline(resid(model2))
+plot(resid(model2)~fitted(model2),cex=1.5)
+abline(h=0,lwd=2)
+diagnostic.plots(model2)
+```
+
+Great. Now let's try a hypothesis test to see if the coefficient for online is significant.
+
+We start with our hypotheses: $H_0: \beta_{online}=0$, and $H_0: \beta_{online} \neq 0.$ We can do this using an ESS F-test, using ANOVA.
+
+```{r}
+# create reduced model
+model2.reduced <- lm(rlength ~ ppage + duration + hhinc + ppeduc + ppethm + ppgender + pppartyid3 + papglb_status + pp2_pphhhead + ppreg4 + ppnet + papglb_friend, data=data)
+
+# for ESS F-test
+anova(model2.reduced,model2)
+```
+At F=118.37 and p<0.001, which is below our threshold of $\alpha=0.05$, we reject the null hypothesis. There is evidence of a nonzero coefficient between meeting online and relationship length, or in other words, there is a significant association between meeting online and relationship length.
+
+This predictor has a confidence interval of
+
+$$CI: -1.036 \pm .09524 \times 1.96 = (-1.22267, -0.8493)$$
+```{r}
+head(data[])
+
+qt(.975, 20133)
+```
+We can also bootstrap our confidence interval to get a reference distribution and the CI. We can see that while a little narrower, the bootstrapped CI is rather similar to our calculated CI.
+```{r}
+# bootstrap
+set.seed(12346)
+nsims = 500
+betas <- rep(NA, nsims)
+
+n = nrow(data)
+for(i in 1:nsims) {
+  train=data[sample(n,size=n,replace=TRUE),]
+  tocheck <- lm(rlength ~ ., data=train)
+  betas[i] <- summary(tocheck)$coefficients[24, 1]
+}
+quantile(betas, c(0.025, 0.975))
+qplot(betas, geom="histogram", fill=I("darkslategray3"),main="Bootstrapped Reference Distribution") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+Now, let's shift to a broader focus of building a best predictive model for relationship length.
+We will start with a full model, named model3 that includes all of our predictors and their interactions. We will then generate model4 which is the product of a step selection process starting at model 2.
+```{r}
+# full model with interactions
+model3 <- lm(rlength ~ (.)^2, data=data)
+summary(model3)
+
+#stepwise model
+model4 <- step(model2,direction="both",scope=list(lower="~1",upper="~.^2"),trace=F)
+summary(model4)
+
+# check assumptions
+diagnostic.plots(model4)
+```
+
+Now to compare the models that we have created so far, we use cross-validation.
+```{r}
+# cross-validation
+set.seed(12345)
+nsims = 200
+n = nrow(data)
+sse1 = sse2 = sse3 = sse4 = rep(NA,nsims)
+
+for(i in 1:nsims) {
+  reorder=sample(n)
+  train=data[reorder[1:1542],]
+  test=data[reorder[1543:n],]
+  
+  boot.1 <- lm(rlength ~ online, data=train)
+  boot.2 <- lm(rlength ~ (.-papglb_status), data=train)
+  boot.3 <- lm(rlength ~ (.-papglb_status)^2, data=train)
+  boot.4 <- lm(rlength ~ ppage + ppeduc + ppgender + hhinc + ppnet + 
+    papglb_friend + pppartyid3 + duration + papglb_status + pp2_pphhhead + 
+    online + ppage:online + ppage:papglb_status + ppgender:ppnet + 
+    ppnet:duration + ppgender:pp2_pphhhead + hhinc:pppartyid3 + 
+    hhinc:ppnet + duration:pp2_pphhhead + ppage:duration + ppeduc:ppnet + 
+    ppage:ppgender, data = train)
+  
+  sse1[i]=sum((test$rlength-predict(boot.1,new=test))^2)
+  sse2[i]=sum((test$rlength-predict(boot.2,new=test))^2)
+  sse3[i]=sum((test$rlength-predict(boot.3,new=test))^2)
+  sse4[i]=sum((test$rlength-predict(boot.4,new=test))^2)
+}
+mean(sse1)
+mean(sse2)
+mean(sse3)
+mean(sse4)
+
+hist(sse4)
+
+```
+
+Ridge analysis (the seed for cross-validation is the same as before, and we train and test as we did before)
+```{r}
+#install.packages('glmnet')
+library(glmnet)
+require(MASS)
+
+set.seed(12345) # for cross-validation consistency
+nsims = 200
+n = nrow(data)
+lambdas_ridge = seq(0, 0.049, 0.0005) # for model 4
+# lambdas_ridge = seq(0.25, .75, 0.01) # for model 3
+X = model.matrix(model4) # insert model here, either model 3 or 4
+Y = data$rlength
+sse_ridge = matrix(NA,nrow=nsims,ncol=length(lambdas_ridge))
+
+for(i in 1:nsims) {
+  reorder=sample(n)
+  Xtrain=X[reorder[1:1542],]
+  Ytrain = Y[reorder[1:1542]]
+  Xtest=X[reorder[1543:n],]
+  Ytest = Y[reorder[1543:n]]
+  
+  ridges = glmnet(Xtrain,Ytrain, alpha = 0, lambda = lambdas_ridge)
+  yhat_test_ridges = predict(ridges,newx=Xtest)
+  sse_ridge[i,]=apply((Ytest-yhat_test_ridges)^2,2,sum)
+}
+sse <- apply(sse_ridge,2,mean)
+print(sse)
+plot(lambdas_ridge, rev(sse))
+l <- lambdas_ridge
+r <- rev(sse)
+df = data.frame(l,r)
+#plot shrinkage for model 3
+#ggplot(aes(x=l, y=r), data=df) + geom_point(alpha=0.8, color="navy", size=2, shape=19) + xlab("Lambdas") + ylab("SSE") + ggtitle("Shrinkage: Model 3") + theme(plot.title = element_text(hjust = 0.5))
+#shrinkage plot for model 4
+ggplot(aes(x=l, y=r), data=df) + geom_point(alpha=0.8, color="navy", size=2, shape=19) + xlab("Lambdas") + ylab("SSE") + ggtitle("Shrinkage: Model 4") + theme(plot.title = element_text(hjust = 0.5)) + coord_cartesian(xlim=c(0,0.05), ylim=c(537,540))
+```
